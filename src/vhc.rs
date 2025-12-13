@@ -1,7 +1,8 @@
 use crate::error::{HypercubeError, Result};
 use crate::header::VhcHeader;
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Write, BufReader, BufWriter, Seek, SeekFrom};
+use rand::{seq::SliceRandom, thread_rng};
+use std::fs::File;
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 /// Magic bytes for VHC file format
@@ -105,18 +106,21 @@ pub fn write_vhc_file(path: &Path, vhc: &VhcFile) -> Result<()> {
     Ok(())
 }
 
-/// Append blocks to an existing VHC file
+/// Append blocks to an existing VHC file and reshuffle the global block table
 pub fn append_blocks_to_vhc(path: &Path, new_blocks: &[Vec<u8>]) -> Result<()> {
-    let mut file = OpenOptions::new()
-        .append(true)
-        .open(path)?;
-
-    for block in new_blocks {
-        file.write_all(block)?;
+    if new_blocks.is_empty() {
+        return Ok(());
     }
 
-    file.flush()?;
-    Ok(())
+    let mut vhc = read_vhc_file(path)?;
+    vhc.blocks.extend(new_blocks.iter().cloned());
+
+    if vhc.blocks.len() > 1 {
+        let mut rng = thread_rng();
+        vhc.blocks.shuffle(&mut rng);
+    }
+
+    write_vhc_file(path, &vhc)
 }
 
 /// Read just the header from a VHC file (without loading all blocks)
@@ -235,9 +239,12 @@ mod tests {
         // Read and verify
         let loaded = read_vhc_file(&path).unwrap();
         assert_eq!(loaded.blocks.len(), 3);
-        assert_eq!(loaded.blocks[0], block1);
-        assert_eq!(loaded.blocks[1], block2);
-        assert_eq!(loaded.blocks[2], block3);
+
+        let mut actual = loaded.blocks.clone();
+        actual.sort();
+        let mut expected = vec![block1, block2, block3];
+        expected.sort();
+        assert_eq!(actual, expected);
     }
 
     #[test]
