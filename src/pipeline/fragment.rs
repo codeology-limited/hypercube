@@ -85,7 +85,10 @@ mod tests {
         assert_eq!(fragments[0], (0u8..64).collect::<Vec<u8>>());
         assert_eq!(fragments[1], (64u8..128).collect::<Vec<u8>>());
         assert_eq!(fragments[2], (128u8..192).collect::<Vec<u8>>());
-        assert_eq!(fragments[3], (192u16..256).map(|i| i as u8).collect::<Vec<u8>>());
+        assert_eq!(
+            fragments[3],
+            (192u16..256).map(|i| i as u8).collect::<Vec<u8>>()
+        );
     }
 
     #[test]

@@ -50,13 +50,14 @@
 //! ).unwrap();
 //! ```
 
+pub mod cli;
+pub mod compartment;
+pub mod cube;
 pub mod error;
 pub mod header;
 pub mod pipeline;
-pub mod compartment;
 pub mod vhc;
-pub mod cli;
 
 pub use error::{HypercubeError, Result};
 pub use header::VhcHeader;
-pub use vhc::{VhcFile, read_vhc_file, write_vhc_file};
+pub use vhc::{read_vhc_file, write_vhc_file, VhcFile};

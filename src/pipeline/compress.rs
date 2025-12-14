@@ -23,13 +23,11 @@ pub fn decompress(data: &[u8], algorithm: Compression) -> Result<Vec<u8>> {
 }
 
 fn compress_zstd(data: &[u8]) -> Result<Vec<u8>> {
-    zstd::encode_all(data, 3)
-        .map_err(|e| HypercubeError::CompressionError(format!("zstd: {}", e)))
+    zstd::encode_all(data, 3).map_err(|e| HypercubeError::CompressionError(format!("zstd: {}", e)))
 }
 
 fn decompress_zstd(data: &[u8]) -> Result<Vec<u8>> {
-    zstd::decode_all(data)
-        .map_err(|e| HypercubeError::DecompressionError(format!("zstd: {}", e)))
+    zstd::decode_all(data).map_err(|e| HypercubeError::DecompressionError(format!("zstd: {}", e)))
 }
 
 fn compress_lz4(data: &[u8]) -> Result<Vec<u8>> {
@@ -44,7 +42,8 @@ fn decompress_lz4(data: &[u8]) -> Result<Vec<u8>> {
 fn compress_brotli(data: &[u8]) -> Result<Vec<u8>> {
     let mut output = Vec::new();
     let mut writer = brotli::CompressorWriter::new(&mut output, 4096, 4, 22);
-    writer.write_all(data)
+    writer
+        .write_all(data)
         .map_err(|e| HypercubeError::CompressionError(format!("brotli: {}", e)))?;
     drop(writer);
     Ok(output)
@@ -53,7 +52,8 @@ fn compress_brotli(data: &[u8]) -> Result<Vec<u8>> {
 fn decompress_brotli(data: &[u8]) -> Result<Vec<u8>> {
     let mut output = Vec::new();
     let mut reader = brotli::Decompressor::new(data, 4096);
-    reader.read_to_end(&mut output)
+    reader
+        .read_to_end(&mut output)
         .map_err(|e| HypercubeError::DecompressionError(format!("brotli: {}", e)))?;
     Ok(output)
 }
@@ -70,27 +70,44 @@ mod tests {
 
     #[test]
     fn test_zstd_roundtrip() {
-        test_roundtrip(Compression::Zstd, b"Hello, World! This is a test of compression.");
+        test_roundtrip(
+            Compression::Zstd,
+            b"Hello, World! This is a test of compression.",
+        );
     }
 
     #[test]
     fn test_lz4_roundtrip() {
-        test_roundtrip(Compression::Lz4, b"Hello, World! This is a test of compression.");
+        test_roundtrip(
+            Compression::Lz4,
+            b"Hello, World! This is a test of compression.",
+        );
     }
 
     #[test]
     fn test_brotli_roundtrip() {
-        test_roundtrip(Compression::Brotli, b"Hello, World! This is a test of compression.");
+        test_roundtrip(
+            Compression::Brotli,
+            b"Hello, World! This is a test of compression.",
+        );
     }
 
     #[test]
     fn test_none_roundtrip() {
-        test_roundtrip(Compression::None, b"Hello, World! This is a test of compression.");
+        test_roundtrip(
+            Compression::None,
+            b"Hello, World! This is a test of compression.",
+        );
     }
 
     #[test]
     fn test_empty_data() {
-        for alg in [Compression::Zstd, Compression::Lz4, Compression::Brotli, Compression::None] {
+        for alg in [
+            Compression::Zstd,
+            Compression::Lz4,
+            Compression::Brotli,
+            Compression::None,
+        ] {
             test_roundtrip(alg, b"");
         }
     }
@@ -98,7 +115,12 @@ mod tests {
     #[test]
     fn test_large_data() {
         let data: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
-        for alg in [Compression::Zstd, Compression::Lz4, Compression::Brotli, Compression::None] {
+        for alg in [
+            Compression::Zstd,
+            Compression::Lz4,
+            Compression::Brotli,
+            Compression::None,
+        ] {
             test_roundtrip(alg, &data);
         }
     }

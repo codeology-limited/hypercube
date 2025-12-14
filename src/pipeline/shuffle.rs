@@ -1,7 +1,7 @@
 use crate::header::Shuffle;
-use sha3::{Sha3_256, Digest};
-use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
+use rand::{seq::SliceRandom, SeedableRng};
+use sha3::{Digest, Sha3_256};
 
 /// Shuffle fragments using the specified algorithm
 /// This is a GLOBAL shuffle - all fragments from all blocks are mixed together
@@ -109,9 +109,7 @@ mod tests {
     #[test]
     fn test_shuffle_unshuffle_roundtrip() {
         // Create test fragments
-        let original: Vec<Vec<u8>> = (0..10)
-            .map(|i| vec![i as u8; 64])
-            .collect();
+        let original: Vec<Vec<u8>> = (0..10).map(|i| vec![i as u8; 64]).collect();
 
         let mut fragments = original.clone();
 
@@ -130,9 +128,7 @@ mod tests {
 
     #[test]
     fn test_shuffle_is_deterministic() {
-        let fragments1: Vec<Vec<u8>> = (0..10)
-            .map(|i| vec![i as u8; 64])
-            .collect();
+        let fragments1: Vec<Vec<u8>> = (0..10).map(|i| vec![i as u8; 64]).collect();
 
         let mut copy1 = fragments1.clone();
         let mut copy2 = fragments1.clone();
@@ -189,9 +185,7 @@ mod tests {
 
     #[test]
     fn test_fisher_yates() {
-        let original: Vec<Vec<u8>> = (0..10)
-            .map(|i| vec![i as u8; 64])
-            .collect();
+        let original: Vec<Vec<u8>> = (0..10).map(|i| vec![i as u8; 64]).collect();
 
         let mut fragments = original.clone();
         let permutation = shuffle_fragments(&mut fragments, Shuffle::FisherYates);

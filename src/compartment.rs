@@ -1,16 +1,12 @@
 use crate::error::{HypercubeError, Result};
-use crate::header::{VhcHeader, CompartmentMeta};
+use crate::header::{CompartmentMeta, VhcHeader};
 use crate::pipeline::{
-    compress, decompress,
-    segment,
-    fragment_all, unfragment_all,
-    whiten_fragments, unwhiten_fragments,
-    apply_aont, reverse_aont,
-    sequence_blocks, unsequence_blocks, generate_sequence_base,
-    authenticate_blocks, verify_mac, AuthenticatedBlock,
-    SequencedBlock, SequenceNumber, SEQUENCE_SIZE,
+    apply_aont, authenticate_blocks, compress, decompress, fragment_all, generate_sequence_base,
+    reverse_aont, segment, sequence_blocks, unfragment_all, unsequence_blocks, unwhiten_fragments,
+    verify_mac, whiten_fragments, AuthenticatedBlock, SequenceNumber, SequencedBlock,
+    SEQUENCE_SIZE,
 };
-use rand::Rng;
+use rand::{rngs::OsRng, Rng, RngCore};
 
 /// Result of creating a compartment - just the serialized blocks
 pub struct CreateCompartmentResult {
@@ -21,7 +17,8 @@ pub struct CreateCompartmentResult {
 /// Generate a random shuffle seed using system CSPRNG
 pub fn generate_shuffle_seed() -> [u8; 32] {
     let mut seed = [0u8; 32];
-    rand::thread_rng().fill(&mut seed);
+    let mut rng = OsRng;
+    rng.fill_bytes(&mut seed);
     seed
 }
 
@@ -29,10 +26,12 @@ pub fn generate_shuffle_seed() -> [u8; 32] {
 /// Applies the full pipeline: Compress → [Metadata+Compressed] → Segment → Fragment → Shuffle → Whiten → AONT → Sequence → AuthMAC
 /// Shuffle seed is derived from secret (deterministic for each secret)
 /// Metadata is prepended to compressed data for extraction
+/// If `pad_to_blocks` is provided, the payload is padded to occupy exactly that many blocks.
 pub fn create_compartment(
     data: &[u8],
     secret: &[u8],
     header: &VhcHeader,
+    pad_to_blocks: Option<usize>,
 ) -> Result<CreateCompartmentResult> {
     // Derive shuffle seed from secret (deterministic)
     // Same secret always produces same shuffle pattern
@@ -51,6 +50,19 @@ pub fn create_compartment(
     let mut data_with_meta = Vec::with_capacity(CompartmentMeta::SIZE + compressed.len());
     data_with_meta.extend_from_slice(&meta.to_bytes());
     data_with_meta.extend_from_slice(&compressed);
+
+    if let Some(target_blocks) = pad_to_blocks {
+        if target_blocks == 0 {
+            return Err(HypercubeError::InvalidDimension(0));
+        }
+        let target_bytes = header.block_size * target_blocks;
+        if data_with_meta.len() > target_bytes {
+            return Err(HypercubeError::FileFull(target_blocks));
+        }
+        if data_with_meta.len() < target_bytes {
+            data_with_meta.resize(target_bytes, 0u8);
+        }
+    }
 
     // Step 3: Segment into blocks (metadata + compressed data)
     let blocks = segment(&data_with_meta, header.block_size);
@@ -75,25 +87,21 @@ pub fn create_compartment(
     let sequenced = sequence_blocks(transformed_blocks, sequence_base);
 
     // Step 9: Authenticate with MAC (KEYED - only step using secret)
-    let authenticated = authenticate_blocks(
-        sequenced,
-        secret,
-        header.hash,
-        header.mac_bits,
-    );
+    let authenticated = authenticate_blocks(sequenced, secret, header.hash, header.mac_bits);
 
     // Step 10: Serialize blocks for storage
-    let serialized: Vec<Vec<u8>> = authenticated.iter().map(|block| {
-        let mut buf = Vec::with_capacity(SEQUENCE_SIZE + block.data.len() + block.mac.len());
-        buf.extend_from_slice(&block.sequence_bytes);
-        buf.extend_from_slice(&block.data);
-        buf.extend_from_slice(&block.mac);
-        buf
-    }).collect();
+    let serialized: Vec<Vec<u8>> = authenticated
+        .iter()
+        .map(|block| {
+            let mut buf = Vec::with_capacity(SEQUENCE_SIZE + block.data.len() + block.mac.len());
+            buf.extend_from_slice(&block.sequence_bytes);
+            buf.extend_from_slice(&block.data);
+            buf.extend_from_slice(&block.mac);
+            buf
+        })
+        .collect();
 
-    Ok(CreateCompartmentResult {
-        blocks: serialized,
-    })
+    Ok(CreateCompartmentResult { blocks: serialized })
 }
 
 /// Extract data from a VHC file by scanning ALL blocks and authenticating each
@@ -139,12 +147,13 @@ pub fn extract_compartment(
 
     if authenticated_blocks.is_empty() {
         return Err(HypercubeError::IntegrityError(
-            "No blocks authenticated with this secret".into()
+            "No blocks authenticated with this secret".into(),
         ));
     }
 
     // Step 2: Extract sequenced blocks (MAC already verified)
-    let sequenced: Vec<SequencedBlock> = authenticated_blocks.into_iter()
+    let sequenced: Vec<SequencedBlock> = authenticated_blocks
+        .into_iter()
         .map(|b| SequencedBlock {
             sequence: SequenceNumber::from_bytes(b.sequence_bytes),
             data: b.data,
@@ -193,7 +202,9 @@ pub fn extract_compartment(
 
     // Step 10: Extract metadata from the start
     if all_data.len() < CompartmentMeta::SIZE {
-        return Err(HypercubeError::IntegrityError("Data too short for metadata".into()));
+        return Err(HypercubeError::IntegrityError(
+            "Data too short for metadata".into(),
+        ));
     }
 
     let meta = CompartmentMeta::from_bytes(&all_data)?;
@@ -201,7 +212,9 @@ pub fn extract_compartment(
     // Verify the embedded shuffle_seed matches our derived one
     // (This confirms the secret is correct and data is intact)
     if meta.shuffle_seed != shuffle_seed {
-        return Err(HypercubeError::IntegrityError("Shuffle seed mismatch".into()));
+        return Err(HypercubeError::IntegrityError(
+            "Shuffle seed mismatch".into(),
+        ));
     }
 
     // Step 11: Extract compressed data (remove padding using compressed_size)
@@ -209,7 +222,9 @@ pub fn extract_compartment(
     let compressed_end = compressed_start + meta.compressed_size as usize;
 
     if compressed_end > all_data.len() {
-        return Err(HypercubeError::IntegrityError("Invalid compressed size in metadata".into()));
+        return Err(HypercubeError::IntegrityError(
+            "Invalid compressed size in metadata".into(),
+        ));
     }
 
     let compressed = &all_data[compressed_start..compressed_end];
@@ -219,7 +234,9 @@ pub fn extract_compartment(
 
     // Verify original size matches
     if data.len() != meta.original_size as usize {
-        return Err(HypercubeError::IntegrityError("Original size mismatch after decompression".into()));
+        return Err(HypercubeError::IntegrityError(
+            "Original size mismatch after decompression".into(),
+        ));
     }
 
     Ok(data)
@@ -228,7 +245,7 @@ pub fn extract_compartment(
 /// Derive shuffle seed deterministically from secret
 /// This allows extraction without storing the seed separately
 fn derive_shuffle_seed(secret: &[u8]) -> [u8; 32] {
-    use sha3::{Sha3_256, Digest};
+    use sha3::{Digest, Sha3_256};
     let mut hasher = Sha3_256::new();
     hasher.update(b"hypercube_shuffle_seed_v1");
     hasher.update(secret);
@@ -251,7 +268,7 @@ const FEISTEL_ROUNDS: usize = 6;
 
 /// Compute the Feistel round function F(R, round, seed)
 fn feistel_round_function(right: u64, round: usize, seed: &[u8; 32]) -> u64 {
-    use sha3::{Sha3_256, Digest};
+    use sha3::{Digest, Sha3_256};
 
     let mut hasher = Sha3_256::new();
     hasher.update(b"hypercube_feistel_v1");
@@ -353,9 +370,7 @@ fn shuffle_fragments(fragments: &mut [Vec<u8>], seed: &[u8; 32]) {
     let n = fragments.len();
 
     // Build the permutation by computing Feistel for each index
-    let permutation: Vec<usize> = (0..n)
-        .map(|i| feistel_permute(i, n, seed))
-        .collect();
+    let permutation: Vec<usize> = (0..n).map(|i| feistel_permute(i, n, seed)).collect();
 
     // Apply forward permutation
     apply_permutation_in_place(fragments, &permutation);
@@ -371,9 +386,7 @@ fn unshuffle_fragments(fragments: &mut [Vec<u8>], seed: &[u8; 32]) {
     let n = fragments.len();
 
     // Build the inverse permutation by computing inverse Feistel for each index
-    let inverse: Vec<usize> = (0..n)
-        .map(|i| feistel_unpermute(i, n, seed))
-        .collect();
+    let inverse: Vec<usize> = (0..n).map(|i| feistel_unpermute(i, n, seed)).collect();
 
     // Apply inverse permutation
     apply_permutation_in_place(fragments, &inverse);
@@ -404,7 +417,8 @@ fn apply_permutation_in_place(fragments: &mut [Vec<u8>], permutation: &[usize]) 
 
 /// Serialize authenticated blocks to bytes for storage
 pub fn serialize_blocks(blocks: &[AuthenticatedBlock], mac_bytes: usize) -> Vec<u8> {
-    let block_size: usize = blocks.first()
+    let block_size: usize = blocks
+        .first()
         .map(|b| SEQUENCE_SIZE + b.data.len() + mac_bytes)
         .unwrap_or(0);
 
@@ -429,9 +443,11 @@ pub fn deserialize_blocks(
     let total_block_size = SEQUENCE_SIZE + data_size + mac_bytes;
 
     if data.len() % total_block_size != 0 {
-        return Err(HypercubeError::InvalidFormat(
-            format!("Data size {} is not a multiple of block size {}", data.len(), total_block_size)
-        ));
+        return Err(HypercubeError::InvalidFormat(format!(
+            "Data size {} is not a multiple of block size {}",
+            data.len(),
+            total_block_size
+        )));
     }
 
     let mut blocks = Vec::new();
@@ -454,8 +470,7 @@ pub fn deserialize_blocks(
 
 /// Generate random chaff data for sealing
 pub fn generate_chaff(size: usize) -> Vec<u8> {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
+    let mut rng = OsRng;
     (0..size).map(|_| rng.gen()).collect()
 }
 
@@ -466,63 +481,43 @@ mod tests {
 
     #[test]
     fn test_create_extract_roundtrip() {
-        let header = VhcHeader::new(128, 4096, 256).unwrap();
+        let header = VhcHeader::new(1, 32, 32, 64, 256).unwrap();
         let secret = b"my secret key";
         let original_data = b"Hello, World! This is test data for the hypercube format.";
 
         // Create compartment - returns serialized blocks
-        let result = create_compartment(
-            original_data,
-            secret,
-            &header,
-        ).unwrap();
+        let result = create_compartment(original_data, secret, &header, None).unwrap();
 
         // Extract compartment by scanning all blocks
-        let extracted = extract_compartment(
-            &result.blocks,
-            secret,
-            &header,
-        ).unwrap();
+        let extracted = extract_compartment(&result.blocks, secret, &header).unwrap();
 
         assert_eq!(original_data.as_slice(), &extracted[..]);
     }
 
     #[test]
     fn test_create_extract_large_data() {
-        let header = VhcHeader::new(128, 4096, 256).unwrap();
+        let header = VhcHeader::new(1, 32, 32, 64, 256).unwrap();
         let secret = b"secret";
         let original_data: Vec<u8> = (0..50000).map(|i| (i % 256) as u8).collect();
 
-        let result = create_compartment(
-            &original_data,
-            secret,
-            &header,
-        ).unwrap();
+        let result = create_compartment(&original_data, secret, &header, None).unwrap();
 
-        let extracted = extract_compartment(
-            &result.blocks,
-            secret,
-            &header,
-        ).unwrap();
+        let extracted = extract_compartment(&result.blocks, secret, &header).unwrap();
 
         assert_eq!(original_data, extracted);
     }
 
     #[test]
     fn test_wrong_secret_fails() {
-        let header = VhcHeader::new(128, 4096, 256).unwrap();
+        let header = VhcHeader::new(1, 32, 32, 64, 256).unwrap();
         let secret = b"correct secret";
         let wrong_secret = b"wrong secret";
         let data = b"sensitive data";
 
-        let result = create_compartment(data, secret, &header).unwrap();
+        let result = create_compartment(data, secret, &header, None).unwrap();
 
         // Wrong secret should fail to authenticate any blocks
-        let extract_result = extract_compartment(
-            &result.blocks,
-            wrong_secret,
-            &header,
-        );
+        let extract_result = extract_compartment(&result.blocks, wrong_secret, &header);
         assert!(extract_result.is_err());
     }
 
@@ -530,15 +525,15 @@ mod tests {
     fn test_multiple_compartments_mixed() {
         // Test that blocks from multiple compartments can coexist
         // and each can be extracted with its own secret
-        let header = VhcHeader::new(128, 4096, 256).unwrap();
+        let header = VhcHeader::new(1, 32, 32, 64, 256).unwrap();
 
         let secret1 = b"secret1";
         let secret2 = b"secret2";
         let data1 = b"Data for compartment 1";
         let data2 = b"Data for compartment 2";
 
-        let result1 = create_compartment(data1, secret1, &header).unwrap();
-        let result2 = create_compartment(data2, secret2, &header).unwrap();
+        let result1 = create_compartment(data1, secret1, &header, None).unwrap();
+        let result2 = create_compartment(data2, secret2, &header, None).unwrap();
 
         // Mix all blocks together (simulating a VHC file)
         let mut all_blocks: Vec<Vec<u8>> = Vec::new();
@@ -560,5 +555,15 @@ mod tests {
 
         // Chaff should be random (not all zeros)
         assert!(chaff.iter().any(|&b| b != 0));
+    }
+
+    #[test]
+    fn test_create_compartment_pads_to_cube() {
+        let header = VhcHeader::new(1, 32, 32, 32, 256).unwrap();
+        let secret = b"pad";
+        let data = b"hi";
+        let target = header.blocks_per_compartment();
+        let result = create_compartment(data, secret, &header, Some(target)).expect("compartment");
+        assert_eq!(result.blocks.len(), target);
     }
 }

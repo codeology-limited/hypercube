@@ -140,10 +140,7 @@ mod tests {
 
     #[test]
     fn test_sequenced_block_serialization() {
-        let block = SequencedBlock::new(
-            SequenceNumber::new(42),
-            vec![1, 2, 3, 4, 5],
-        );
+        let block = SequencedBlock::new(SequenceNumber::new(42), vec![1, 2, 3, 4, 5]);
 
         let bytes = block.to_bytes();
         assert_eq!(bytes.len(), SEQUENCE_SIZE + 5);
@@ -155,9 +152,7 @@ mod tests {
 
     #[test]
     fn test_sequence_unsequence_roundtrip() {
-        let blocks: Vec<Vec<u8>> = (0..10)
-            .map(|i| vec![i as u8; 64])
-            .collect();
+        let blocks: Vec<Vec<u8>> = (0..10).map(|i| vec![i as u8; 64]).collect();
 
         let base = 1000u128;
         let sequenced = sequence_blocks(blocks.clone(), base);
@@ -172,11 +167,7 @@ mod tests {
 
     #[test]
     fn test_unsequence_reorders() {
-        let blocks: Vec<Vec<u8>> = vec![
-            vec![0; 4],
-            vec![1; 4],
-            vec![2; 4],
-        ];
+        let blocks: Vec<Vec<u8>> = vec![vec![0; 4], vec![1; 4], vec![2; 4]];
 
         let mut sequenced = sequence_blocks(blocks.clone(), 0);
 
@@ -191,11 +182,7 @@ mod tests {
 
     #[test]
     fn test_unsequence_detects_missing() {
-        let blocks: Vec<Vec<u8>> = vec![
-            vec![0; 4],
-            vec![1; 4],
-            vec![2; 4],
-        ];
+        let blocks: Vec<Vec<u8>> = vec![vec![0; 4], vec![1; 4], vec![2; 4]];
 
         let mut sequenced = sequence_blocks(blocks, 0);
         sequenced.remove(1); // Remove middle block

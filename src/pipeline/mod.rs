@@ -1,17 +1,17 @@
+pub mod aont;
 pub mod compress;
-pub mod segment;
 pub mod fragment;
+pub mod mac;
+pub mod segment;
+pub mod sequence;
 pub mod shuffle;
 pub mod whiten;
-pub mod aont;
-pub mod sequence;
-pub mod mac;
 
+pub use aont::*;
 pub use compress::*;
-pub use segment::*;
 pub use fragment::*;
+pub use mac::*;
+pub use segment::*;
+pub use sequence::*;
 pub use shuffle::*;
 pub use whiten::*;
-pub use aont::*;
-pub use sequence::*;
-pub use mac::*;

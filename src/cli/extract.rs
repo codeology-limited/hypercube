@@ -1,5 +1,5 @@
-use crate::error::Result;
 use crate::compartment::extract_compartment;
+use crate::error::Result;
 use crate::vhc::read_vhc_file;
 use std::path::Path;
 
@@ -22,11 +22,7 @@ pub fn extract_from_vhc(
 
     // Extract compartment by scanning all blocks
     // The extract function tries to authenticate each block with the secret
-    let data = extract_compartment(
-        &vhc.blocks,
-        options.secret.as_bytes(),
-        &vhc.header,
-    )?;
+    let data = extract_compartment(&vhc.blocks, options.secret.as_bytes(), &vhc.header)?;
 
     // Write extracted data to output
     std::fs::write(output_path, &data)?;
@@ -122,12 +118,16 @@ mod tests {
         add_compartment(&input2, &vhc_path, &options2).unwrap();
 
         // Extract first compartment
-        let extract1 = ExtractOptions { secret: "secret1".into() };
+        let extract1 = ExtractOptions {
+            secret: "secret1".into(),
+        };
         extract_from_vhc(&vhc_path, &output, &extract1).unwrap();
         assert_eq!(std::fs::read(&output).unwrap(), data1);
 
         // Extract second compartment
-        let extract2 = ExtractOptions { secret: "secret2".into() };
+        let extract2 = ExtractOptions {
+            secret: "secret2".into(),
+        };
         extract_from_vhc(&vhc_path, &output, &extract2).unwrap();
         assert_eq!(std::fs::read(&output).unwrap(), data2);
     }

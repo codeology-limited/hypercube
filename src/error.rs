@@ -14,6 +14,9 @@ pub enum HypercubeError {
     #[error("Invalid block size: {0}. Must be between 2KB and 512KB and a power of 2")]
     InvalidBlockSize(usize),
 
+    #[error("Invalid cube size: {0}. Must be 16-2048 bits and divisible by 8")]
+    InvalidCubeSize(usize),
+
     #[error("Invalid dimension: {0}. Must be between 2 and 65536")]
     InvalidDimension(usize),
 
@@ -26,8 +29,14 @@ pub enum HypercubeError {
     #[error("Compartment {0} already exists")]
     CompartmentExists(usize),
 
-    #[error("File is full: maximum {0} compartments reached")]
+    #[error("Cube is full: maximum {0} blocks reached")]
     FileFull(usize),
+
+    #[error("Payload requires {0} bytes, exceeding maximum cube capacity (512 KiB)")]
+    PayloadTooLarge(usize),
+
+    #[error("Invalid cube id: {0}")]
+    InvalidCube(usize),
 
     #[error("MAC verification failed for compartment {0}")]
     MacVerificationFailed(usize),

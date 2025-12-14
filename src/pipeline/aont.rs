@@ -1,5 +1,5 @@
 use crate::header::Aont;
-use sha3::{Sha3_256, Digest};
+use sha3::{Digest, Sha3_256};
 
 /// Apply All-or-Nothing Transform to fragments
 /// Ensures that ALL fragments are needed to recover ANY fragment
@@ -147,7 +147,6 @@ fn oaep_aont_reverse(fragments: &mut [Vec<u8>]) {
     }
 }
 
-
 /// Compute hash of a subset of fragments
 fn compute_half_hash(fragments: &[Vec<u8>]) -> [u8; 32] {
     let mut hasher = Sha3_256::new();
@@ -267,9 +266,7 @@ mod tests {
 
     #[test]
     fn test_aont_is_deterministic() {
-        let fragments: Vec<Vec<u8>> = (0..5)
-            .map(|i| vec![i as u8; 64])
-            .collect();
+        let fragments: Vec<Vec<u8>> = (0..5).map(|i| vec![i as u8; 64]).collect();
 
         let mut copy1 = fragments.clone();
         let mut copy2 = fragments.clone();

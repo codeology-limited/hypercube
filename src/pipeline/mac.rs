@@ -2,8 +2,8 @@ use crate::error::{HypercubeError, Result};
 use crate::header::HashAlgorithm;
 use crate::pipeline::sequence::{SequencedBlock, SEQUENCE_SIZE};
 use hmac::{Hmac, Mac};
-use sha3::Sha3_256;
 use sha2::Sha256;
+use sha3::Sha3_256;
 
 type HmacSha3_256 = Hmac<Sha3_256>;
 type HmacSha256 = Hmac<Sha256>;
@@ -70,8 +70,8 @@ fn compute_mac_raw(
 
     match algorithm {
         HashAlgorithm::Sha3 => {
-            let mut mac = HmacSha3_256::new_from_slice(secret)
-                .expect("HMAC can take key of any size");
+            let mut mac =
+                HmacSha3_256::new_from_slice(secret).expect("HMAC can take key of any size");
             mac.update(data);
             let result = mac.finalize().into_bytes();
             truncate_mac(&result, mac_bytes)
@@ -82,8 +82,8 @@ fn compute_mac_raw(
             truncate_mac(hash.as_bytes(), mac_bytes)
         }
         HashAlgorithm::Sha256 => {
-            let mut mac = HmacSha256::new_from_slice(secret)
-                .expect("HMAC can take key of any size");
+            let mut mac =
+                HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
             mac.update(data);
             let result = mac.finalize().into_bytes();
             truncate_mac(&result, mac_bytes)
@@ -193,10 +193,7 @@ mod tests {
     use crate::pipeline::sequence::SequenceNumber;
 
     fn test_block() -> SequencedBlock {
-        SequencedBlock::new(
-            SequenceNumber::new(12345),
-            vec![1, 2, 3, 4, 5, 6, 7, 8],
-        )
+        SequencedBlock::new(SequenceNumber::new(12345), vec![1, 2, 3, 4, 5, 6, 7, 8])
     }
 
     #[test]
@@ -264,7 +261,12 @@ mod tests {
             mac,
         };
 
-        assert!(!verify_mac(&auth_block, b"wrong key", HashAlgorithm::Sha3, 256));
+        assert!(!verify_mac(
+            &auth_block,
+            b"wrong key",
+            HashAlgorithm::Sha3,
+            256
+        ));
     }
 
     #[test]
@@ -288,26 +290,14 @@ mod tests {
     #[test]
     fn test_authenticate_verify_roundtrip() {
         let blocks: Vec<SequencedBlock> = (0..5)
-            .map(|i| SequencedBlock::new(
-                SequenceNumber::new(i as u128),
-                vec![i as u8; 64],
-            ))
+            .map(|i| SequencedBlock::new(SequenceNumber::new(i as u128), vec![i as u8; 64]))
             .collect();
 
         let secret = b"my secret";
-        let authenticated = authenticate_blocks(
-            blocks.clone(),
-            secret,
-            HashAlgorithm::Sha3,
-            256,
-        );
+        let authenticated = authenticate_blocks(blocks.clone(), secret, HashAlgorithm::Sha3, 256);
 
-        let extracted = verify_and_extract_blocks(
-            authenticated,
-            secret,
-            HashAlgorithm::Sha3,
-            256,
-        ).unwrap();
+        let extracted =
+            verify_and_extract_blocks(authenticated, secret, HashAlgorithm::Sha3, 256).unwrap();
 
         assert_eq!(extracted.len(), blocks.len());
         for (orig, ext) in blocks.iter().zip(extracted.iter()) {

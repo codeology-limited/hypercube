@@ -1,7 +1,7 @@
 use crate::error::Result;
 use crate::vhc::read_vhc_file;
-use std::path::Path;
 use rand::Rng;
+use std::path::Path;
 
 /// Show cryptanalysis stats for a random block from a VHC file
 pub fn show_stats(path: &Path) -> Result<String> {
@@ -29,9 +29,16 @@ pub fn show_stats(path: &Path) -> Result<String> {
     output.push_str(&format!("Hypercube Block Cryptanalysis\n"));
     output.push_str(&format!("=============================\n\n"));
     output.push_str(&format!("File: {}\n", path.display()));
-    output.push_str(&format!("Block: {} (of {} total)\n", block_idx, vhc.blocks.len()));
-    output.push_str(&format!("Block size: {} bytes (data only, excluding 16B seq + {}B MAC)\n\n",
-        block_data.len(), mac_size));
+    output.push_str(&format!(
+        "Block: {} (of {} total)\n",
+        block_idx,
+        vhc.blocks.len()
+    ));
+    output.push_str(&format!(
+        "Block size: {} bytes (data only, excluding 16B seq + {}B MAC)\n\n",
+        block_data.len(),
+        mac_size
+    ));
 
     // Cryptanalysis
     output.push_str("Cryptanalysis Results\n");
@@ -41,46 +48,141 @@ pub fn show_stats(path: &Path) -> Result<String> {
     let entropy = calculate_entropy(block_data);
     let max_entropy = 8.0; // Max for bytes
     let entropy_pct = (entropy / max_entropy) * 100.0;
-    output.push_str(&format!("Shannon Entropy: {:.4} bits/byte ({:.1}% of max)\n", entropy, entropy_pct));
-    output.push_str(&format!("  Interpretation: {}\n\n", interpret_entropy(entropy)));
+    output.push_str(&format!(
+        "Shannon Entropy: {:.4} bits/byte ({:.1}% of max)\n",
+        entropy, entropy_pct
+    ));
+    output.push_str(&format!(
+        "  Interpretation: {}\n\n",
+        interpret_entropy(entropy)
+    ));
 
     // Chi-square test
     let chi_square = calculate_chi_square(block_data);
     let chi_p_value = chi_square_p_value(chi_square, 255);
     output.push_str(&format!("Chi-Square: {:.2} (df=255)\n", chi_square));
     output.push_str(&format!("  P-value: {}\n", format_p_value(chi_p_value)));
-    output.push_str(&format!("  Interpretation: {}\n\n", interpret_chi_square(chi_p_value)));
+    output.push_str(&format!(
+        "  Interpretation: {}\n\n",
+        interpret_chi_square(chi_p_value)
+    ));
 
     // Byte frequency analysis
     let (most_common, least_common, zero_count) = byte_frequency_analysis(block_data);
     output.push_str("Byte Frequency:\n");
-    output.push_str(&format!("  Most common:  0x{:02X} ({} times, {:.1}%)\n",
-        most_common.0, most_common.1, (most_common.1 as f64 / block_data.len() as f64) * 100.0));
-    output.push_str(&format!("  Least common: 0x{:02X} ({} times)\n", least_common.0, least_common.1));
-    output.push_str(&format!("  Zero bytes:   {} ({:.1}%)\n", zero_count, (zero_count as f64 / block_data.len() as f64) * 100.0));
-    output.push_str(&format!("  Unique bytes: {}/256\n\n", count_unique_bytes(block_data)));
+    output.push_str(&format!(
+        "  Most common:  0x{:02X} ({} times, {:.1}%)\n",
+        most_common.0,
+        most_common.1,
+        (most_common.1 as f64 / block_data.len() as f64) * 100.0
+    ));
+    output.push_str(&format!(
+        "  Least common: 0x{:02X} ({} times)\n",
+        least_common.0, least_common.1
+    ));
+    output.push_str(&format!(
+        "  Zero bytes:   {} ({:.1}%)\n",
+        zero_count,
+        (zero_count as f64 / block_data.len() as f64) * 100.0
+    ));
+    output.push_str(&format!(
+        "  Unique bytes: {}/256\n\n",
+        count_unique_bytes(block_data)
+    ));
 
     // Runs test (sequences of same bit)
     let runs = calculate_runs_test(block_data);
     output.push_str(&format!("Runs Test: {} runs\n", runs.0));
     output.push_str(&format!("  Expected: ~{:.0} runs\n", runs.1));
-    output.push_str(&format!("  Interpretation: {}\n\n", interpret_runs(runs.0, runs.1)));
+    output.push_str(&format!(
+        "  Interpretation: {}\n\n",
+        interpret_runs(runs.0, runs.1)
+    ));
 
     // Serial correlation
     let correlation = calculate_serial_correlation(block_data);
     output.push_str(&format!("Serial Correlation: {:.4}\n", correlation));
-    output.push_str(&format!("  Interpretation: {}\n\n", interpret_correlation(correlation)));
+    output.push_str(&format!(
+        "  Interpretation: {}\n\n",
+        interpret_correlation(correlation)
+    ));
 
     // ASCII analysis
     let ascii_ratio = calculate_ascii_ratio(block_data);
     output.push_str(&format!("ASCII Printable: {:.1}%\n", ascii_ratio * 100.0));
-    output.push_str(&format!("  Interpretation: {}\n\n", interpret_ascii(ascii_ratio)));
+    output.push_str(&format!(
+        "  Interpretation: {}\n\n",
+        interpret_ascii(ascii_ratio)
+    ));
+
+    // Byte-level autocorrelation
+    let autocorr = calculate_autocorrelation(block_data, &[1, 2, 4, 8, 16]);
+    output.push_str("Byte Autocorrelation:\n");
+    if autocorr.is_empty() {
+        output.push_str("  Not enough data for autocorrelation\n\n");
+    } else {
+        for (lag, value) in autocorr {
+            output.push_str(&format!("  Lag {:>2}: {:>+0.4}\n", lag, value));
+        }
+        output.push_str("\n");
+    }
+
+    // Bit-plane chi-square
+    let bit_planes = bit_plane_stats(block_data);
+    output.push_str("Bit-Plane Uniformity (chi-square df=1):\n");
+    for plane in &bit_planes {
+        output.push_str(&format!(
+            "  Bit {}: χ²={:.2}, p-value={}, ones={}/{}\n",
+            plane.bit,
+            plane.chi_square,
+            format_p_value(plane.p_value),
+            plane.ones,
+            plane.total
+        ));
+    }
+    output.push_str("\n");
+
+    // Kolmogorov-Smirnov
+    let ks = kolmogorov_smirnov_uniform(block_data);
+    output.push_str(&format!(
+        "Kolmogorov-Smirnov vs uniform: D={:.4}, p-value={}\n",
+        ks.d_stat,
+        format_p_value(ks.p_value)
+    ));
+    output.push_str(&format!(
+        "  Interpretation: {}\n\n",
+        interpret_ks(ks.p_value)
+    ));
+
+    // Shingled entropy
+    let shingle = shingled_entropy(block_data, 32);
+    output.push_str("Sliding Window Entropy (32-byte shingles):\n");
+    output.push_str(&format!(
+        "  Average: {:.4} bits/byte (min {:.4}, max {:.4})\n\n",
+        shingle.average, shingle.min, shingle.max
+    ));
+
+    // Linear complexity
+    let lin = linear_complexity(block_data);
+    output.push_str("Linear Complexity (Berlekamp-Massey):\n");
+    output.push_str(&format!(
+        "  L = {} ({} bits total, {:.1}% of length)\n\n",
+        lin.length,
+        lin.total_bits,
+        lin.length as f64 / lin.total_bits as f64 * 100.0
+    ));
 
     // Hexdump (first 256 bytes or full block if smaller)
     let dump_size = block_data.len().min(256);
     output.push_str(&format!("Hexdump (first {} bytes)\n", dump_size));
     output.push_str("------------------------\n");
     output.push_str(&hexdump(&block_data[..dump_size]));
+
+    output.push_str("\nTests Requiring Multiple Blocks (not run):\n");
+    output.push_str("  - NIST SP 800-22 suite\n");
+    output.push_str("  - Diehard/Dieharder\n");
+    output.push_str("  - TestU01 batteries\n");
+    output.push_str("  - Permutation/Lag Overlap comparisons\n");
 
     Ok(output)
 }
@@ -154,12 +256,12 @@ fn chi_square_p_value(chi_square: f64, df: usize) -> f64 {
 
 /// Error function approximation
 fn erf(x: f64) -> f64 {
-    let a1 =  0.254829592;
+    let a1 = 0.254829592;
     let a2 = -0.284496736;
-    let a3 =  1.421413741;
+    let a3 = 1.421413741;
     let a4 = -1.453152027;
-    let a5 =  1.061405429;
-    let p  =  0.3275911;
+    let a5 = 1.061405429;
+    let p = 0.3275911;
 
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     let x = x.abs();
@@ -316,6 +418,212 @@ fn interpret_ascii(ratio: f64) -> &'static str {
     } else {
         "Low - binary/encrypted data"
     }
+}
+
+fn calculate_autocorrelation(data: &[u8], lags: &[usize]) -> Vec<(usize, f64)> {
+    if data.len() < 2 {
+        return Vec::new();
+    }
+    let mean = data.iter().map(|&b| b as f64).sum::<f64>() / data.len() as f64;
+    let mut variance = 0.0;
+    for &byte in data {
+        let diff = byte as f64 - mean;
+        variance += diff * diff;
+    }
+    if variance == 0.0 {
+        return Vec::new();
+    }
+    lags.iter()
+        .copied()
+        .filter(|lag| *lag > 0 && *lag < data.len())
+        .map(|lag| {
+            let mut cov = 0.0;
+            for i in 0..data.len() - lag {
+                cov += (data[i] as f64 - mean) * (data[i + lag] as f64 - mean);
+            }
+            (lag, cov / variance)
+        })
+        .collect()
+}
+
+struct BitPlaneStat {
+    bit: usize,
+    ones: usize,
+    total: usize,
+    chi_square: f64,
+    p_value: f64,
+}
+
+fn bit_plane_stats(data: &[u8]) -> Vec<BitPlaneStat> {
+    let total = data.len();
+    if total == 0 {
+        return Vec::new();
+    }
+    let mut stats = Vec::new();
+    for bit in 0..8 {
+        let ones = data
+            .iter()
+            .filter(|&&byte| ((byte >> bit) & 1) == 1)
+            .count();
+        let zeros = total - ones;
+        let expected = total as f64 / 2.0;
+        let chi_square = if expected == 0.0 {
+            0.0
+        } else {
+            let diff_zero = zeros as f64 - expected;
+            let diff_one = ones as f64 - expected;
+            (diff_zero * diff_zero + diff_one * diff_one) / expected
+        };
+        stats.push(BitPlaneStat {
+            bit,
+            ones,
+            total,
+            chi_square,
+            p_value: chi_square_p_value(chi_square, 1),
+        });
+    }
+    stats
+}
+
+struct KolmogorovResult {
+    d_stat: f64,
+    p_value: f64,
+}
+
+fn kolmogorov_smirnov_uniform(data: &[u8]) -> KolmogorovResult {
+    if data.is_empty() {
+        return KolmogorovResult {
+            d_stat: 0.0,
+            p_value: 1.0,
+        };
+    }
+    let mut values: Vec<f64> = data.iter().map(|&b| b as f64 / 255.0).collect();
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = values.len() as f64;
+    let mut d: f64 = 0.0;
+    for (i, &val) in values.iter().enumerate() {
+        let fi = (i as f64 + 1.0) / n;
+        let diff1 = (fi - val).abs();
+        let diff2 = (val - (i as f64 / n)).abs();
+        d = d.max(diff1.max(diff2));
+    }
+    let p_value = kolmogorov_p_value(d, data.len());
+    KolmogorovResult { d_stat: d, p_value }
+}
+
+fn kolmogorov_p_value(d: f64, n: usize) -> f64 {
+    if n == 0 {
+        return 1.0;
+    }
+    let lambda = (n as f64).sqrt() * d;
+    if lambda == 0.0 {
+        return 1.0;
+    }
+    let mut sum = 0.0;
+    for k in 1..100 {
+        let term = (-2.0 * (k as f64).powi(2) * lambda * lambda).exp();
+        sum += (-1.0f64).powi(k - 1) * term;
+    }
+    (2.0 * sum).clamp(0.0, 1.0)
+}
+
+fn interpret_ks(p_value: f64) -> &'static str {
+    if p_value < 0.01 {
+        "FAIL - unlikely to be uniform"
+    } else if p_value < 0.05 {
+        "Suspect - mild deviation"
+    } else {
+        "PASS - consistent with uniform"
+    }
+}
+
+struct ShingleEntropy {
+    average: f64,
+    min: f64,
+    max: f64,
+}
+
+fn shingled_entropy(data: &[u8], window: usize) -> ShingleEntropy {
+    if data.is_empty() {
+        return ShingleEntropy {
+            average: 0.0,
+            min: 0.0,
+            max: 0.0,
+        };
+    }
+    let win = window.min(data.len()).max(1);
+    let mut entropies = Vec::new();
+    for chunk in data.windows(win) {
+        entropies.push(calculate_entropy(chunk));
+    }
+    if entropies.is_empty() {
+        entropies.push(calculate_entropy(data));
+    }
+    let avg = entropies.iter().sum::<f64>() / entropies.len() as f64;
+    let min = entropies.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max = entropies.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    ShingleEntropy {
+        average: avg,
+        min,
+        max,
+    }
+}
+
+struct LinearComplexityResult {
+    length: usize,
+    total_bits: usize,
+}
+
+fn linear_complexity(data: &[u8]) -> LinearComplexityResult {
+    let mut bits = Vec::with_capacity(data.len() * 8);
+    for &byte in data {
+        for bit in (0..8).rev() {
+            bits.push((byte >> bit) & 1);
+        }
+    }
+    let length = berlekamp_massey(&bits);
+    LinearComplexityResult {
+        length,
+        total_bits: bits.len(),
+    }
+}
+
+fn berlekamp_massey(bits: &[u8]) -> usize {
+    let n = bits.len();
+    if n == 0 {
+        return 0;
+    }
+    let mut c = vec![0u8; n];
+    let mut b = vec![0u8; n];
+    c[0] = 1;
+    b[0] = 1;
+    let mut l = 0usize;
+    let mut m = -1isize;
+
+    for n in 0..bits.len() {
+        let mut d = bits[n];
+        for i in 1..=l {
+            d ^= c[i] & bits[n - i];
+        }
+        if d == 1 {
+            let temp = c.clone();
+            let shift = n as isize - m;
+            for j in 0..b.len() {
+                if b[j] == 1 {
+                    let idx = j as isize + shift;
+                    if idx >= 0 && (idx as usize) < c.len() {
+                        c[idx as usize] ^= 1;
+                    }
+                }
+            }
+            if 2 * l <= n {
+                l = n + 1 - l;
+                m = n as isize;
+                b = temp;
+            }
+        }
+    }
+    l
 }
 
 /// Generate hexdump output

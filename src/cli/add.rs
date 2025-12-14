@@ -1,7 +1,9 @@
-use crate::error::Result;
-use crate::header::{VhcHeader, Compression, Shuffle, Aont, HashAlgorithm, Whitener};
-use crate::compartment::{create_compartment, generate_chaff};
-use crate::vhc::{VhcFile, write_vhc_file, append_blocks_to_vhc, read_vhc_header};
+use crate::cli::seal::seal_file;
+use crate::compartment::create_compartment;
+use crate::cube::{analyze_data, cube_config};
+use crate::error::{HypercubeError, Result};
+use crate::header::{Aont, Compression, HashAlgorithm, Shuffle, VhcHeader, Whitener};
+use crate::vhc::{append_blocks_to_vhc, get_block_count, read_vhc_header, write_vhc_file, VhcFile};
 use std::path::Path;
 
 /// Options for the add command
@@ -13,9 +15,8 @@ pub struct AddOptions {
     pub aont: Aont,
     pub hash: HashAlgorithm,
     pub whitener: Whitener,
-    pub block_size: usize,
+    pub cube: usize,
     pub mac_bits: usize,
-    pub dimension: usize,
     pub compartment: Option<usize>, // Ignored in new model
     pub seal: bool,
 }
@@ -29,9 +30,8 @@ impl Default for AddOptions {
             aont: Aont::default(),
             hash: HashAlgorithm::default(),
             whitener: Whitener::default(),
-            block_size: 4096,
+            cube: 1,
             mac_bits: 256,
-            dimension: 128,
             compartment: None,
             seal: false,
         }
@@ -49,13 +49,21 @@ pub fn add_compartment(
     let input_data = std::fs::read(input_path)?;
 
     // Load existing header or create new file
-    let header = if output_path.exists() {
-        read_vhc_header(output_path)?
+    let (header, current_blocks, mut pad_blocks) = if output_path.exists() {
+        let header = read_vhc_header(output_path)?;
+        let blocks = get_block_count(output_path)?;
+        (header, blocks, None)
     } else {
+        let cube_cfg = cube_config(options.cube)?;
+        let analysis = analyze_data(&input_data, options.compression, cube_cfg)?;
+        let block_bytes = analysis.block_size_bytes;
+
         // Create new VHC file with header
         let mut header = VhcHeader::new(
-            options.dimension,
-            options.block_size,
+            cube_cfg.id,
+            cube_cfg.compartments,
+            cube_cfg.blocks_per_compartment,
+            block_bytes,
             options.mac_bits,
         )?;
         header.compression = options.compression;
@@ -67,65 +75,39 @@ pub fn add_compartment(
         // Write empty file with just header
         let vhc = VhcFile::new(header.clone());
         write_vhc_file(output_path, &vhc)?;
-        header
+        let blocks_per = header.blocks_per_compartment();
+        (header, 0, Some(blocks_per))
     };
+    if pad_blocks.is_none() {
+        pad_blocks = Some(header.blocks_per_compartment());
+    }
+    let capacity = header.theoretical_block_count();
 
     // Create the compartment - returns serialized blocks
-    let result = create_compartment(
-        &input_data,
-        options.secret.as_bytes(),
-        &header,
-    )?;
+    let result = create_compartment(&input_data, options.secret.as_bytes(), &header, pad_blocks)?;
 
     let block_count = result.blocks.len();
+    let remaining = capacity.saturating_sub(current_blocks);
+    if block_count > remaining {
+        return Err(HypercubeError::FileFull(capacity));
+    }
 
     // Append blocks to VHC file
     append_blocks_to_vhc(output_path, &result.blocks)?;
 
     // Handle --seal option: add chaff compartments
     if options.seal {
-        seal_with_chaff(output_path, &header, options.dimension)?;
+        seal_file(output_path)?;
     }
 
     Ok(block_count)
 }
 
-/// Fill remaining capacity with chaff blocks
-/// Since there's no compartment tracking, we just add more blocks
-fn seal_with_chaff(path: &Path, header: &VhcHeader, _dimension: usize) -> Result<()> {
-    use rand::Rng;
-
-    // Generate some random number of chaff compartments
-    let num_chaff: usize = rand::thread_rng().gen_range(3..10);
-
-    for _ in 0..num_chaff {
-        // Generate random chaff data (random size between 100 and 10000 bytes)
-        let chaff_size: usize = rand::thread_rng().gen_range(100..10000);
-        let chaff_data = generate_chaff(chaff_size);
-
-        // Generate a unique secret for this chaff compartment
-        // (nobody will ever know this secret)
-        let chaff_secret: Vec<u8> = (0..32).map(|_| rand::thread_rng().gen()).collect();
-
-        // Create chaff compartment
-        let result = create_compartment(
-            &chaff_data,
-            &chaff_secret,
-            header,
-        )?;
-
-        // Append chaff blocks
-        append_blocks_to_vhc(path, &result.blocks)?;
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vhc::{get_block_count, read_vhc_header};
     use tempfile::tempdir;
-    use crate::vhc::get_block_count;
 
     #[test]
     fn test_add_compartment_new_file() {
@@ -146,6 +128,8 @@ mod tests {
 
         // Verify blocks were written
         let file_blocks = get_block_count(&output_path).unwrap();
+        let header = read_vhc_header(&output_path).unwrap();
+        assert_eq!(block_count, header.blocks_per_compartment());
         assert_eq!(file_blocks, block_count);
     }
 

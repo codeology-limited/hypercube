@@ -48,7 +48,9 @@ pub fn read_vhc_file(path: &Path) -> Result<VhcFile> {
     let mut magic = [0u8; 4];
     reader.read_exact(&mut magic)?;
     if &magic != VHC_MAGIC {
-        return Err(HypercubeError::InvalidFormat("Invalid VHC magic bytes".into()));
+        return Err(HypercubeError::InvalidFormat(
+            "Invalid VHC magic bytes".into(),
+        ));
     }
 
     // Read header length (4 bytes, little-endian)
@@ -132,7 +134,9 @@ pub fn read_vhc_header(path: &Path) -> Result<VhcHeader> {
     let mut magic = [0u8; 4];
     reader.read_exact(&mut magic)?;
     if &magic != VHC_MAGIC {
-        return Err(HypercubeError::InvalidFormat("Invalid VHC magic bytes".into()));
+        return Err(HypercubeError::InvalidFormat(
+            "Invalid VHC magic bytes".into(),
+        ));
     }
 
     // Read header length
@@ -184,7 +188,7 @@ mod tests {
         let path = dir.path().join("test.vhc");
 
         // Create a VHC file with some blocks
-        let header = VhcHeader::new(128, 4096, 256).unwrap();
+        let header = VhcHeader::new(1, 32, 32, 64, 256).unwrap();
         let mut vhc = VhcFile::new(header);
 
         let block_size = vhc.header.total_block_size();
@@ -199,7 +203,7 @@ mod tests {
         // Read back
         let loaded = read_vhc_file(&path).unwrap();
 
-        assert_eq!(loaded.header.dimension, 128);
+        assert_eq!(loaded.header.dimension, 32);
         assert_eq!(loaded.blocks.len(), 2);
         assert_eq!(loaded.blocks[0], block1);
         assert_eq!(loaded.blocks[1], block2);
@@ -222,7 +226,7 @@ mod tests {
         let path = dir.path().join("append.vhc");
 
         // Create initial file
-        let header = VhcHeader::new(128, 4096, 256).unwrap();
+        let header = VhcHeader::new(1, 32, 32, 64, 256).unwrap();
         let block_size = header.total_block_size();
         let vhc = VhcFile::new(header);
         write_vhc_file(&path, &vhc).unwrap();
@@ -252,7 +256,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("header.vhc");
 
-        let header = VhcHeader::new(64, 8192, 512).unwrap();
+        let header = VhcHeader::new(1, 32, 32, 128, 512).unwrap();
         let block_size = header.total_block_size();
         let mut vhc = VhcFile::new(header);
         vhc.add_blocks(vec![vec![0u8; block_size]; 100]); // 100 blocks
@@ -260,8 +264,8 @@ mod tests {
 
         // Read just header
         let header_only = read_vhc_header(&path).unwrap();
-        assert_eq!(header_only.dimension, 64);
-        assert_eq!(header_only.block_size, 8192);
+        assert_eq!(header_only.dimension, 32);
+        assert_eq!(header_only.block_size, 128);
         assert_eq!(header_only.mac_bits, 512);
 
         // Get block count

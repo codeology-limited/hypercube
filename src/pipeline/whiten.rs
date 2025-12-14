@@ -1,5 +1,5 @@
 use crate::header::Whitener;
-use sha3::{Keccak256, Digest};
+use sha3::{Digest, Keccak256};
 
 /// Whiten fragments using the specified algorithm
 /// UNKEYED: Whitening is deterministic based on fragment position

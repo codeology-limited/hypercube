@@ -45,7 +45,10 @@ fn main() {
     // Set environment variables for compilation
     println!("cargo:rustc-env=HYPERCUBE_VERSION={}", version);
     println!("cargo:rustc-env=HYPERCUBE_BUILD={}", new_build);
-    println!("cargo:rustc-env=HYPERCUBE_PROFILE={}", if is_release { "release" } else { "development" });
+    println!(
+        "cargo:rustc-env=HYPERCUBE_PROFILE={}",
+        if is_release { "release" } else { "development" }
+    );
     println!("cargo:rustc-env=HYPERCUBE_GIT_HASH={}", git_hash);
 
     // Rerun if these files change

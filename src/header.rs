@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::error::{HypercubeError, Result};
+use serde::{Deserialize, Serialize};
 
 /// Compression algorithm options
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -20,7 +20,10 @@ impl std::str::FromStr for Compression {
             "lz4" => Ok(Self::Lz4),
             "brotli" => Ok(Self::Brotli),
             "none" => Ok(Self::None),
-            _ => Err(HypercubeError::UnsupportedAlgorithm(format!("compression: {}", s))),
+            _ => Err(HypercubeError::UnsupportedAlgorithm(format!(
+                "compression: {}",
+                s
+            ))),
         }
     }
 }
@@ -40,7 +43,10 @@ impl std::str::FromStr for Shuffle {
         match s.to_lowercase().as_str() {
             "feistel" => Ok(Self::Feistel),
             "fisher-yates" | "fisheryates" => Ok(Self::FisherYates),
-            _ => Err(HypercubeError::UnsupportedAlgorithm(format!("shuffle: {}", s))),
+            _ => Err(HypercubeError::UnsupportedAlgorithm(format!(
+                "shuffle: {}",
+                s
+            ))),
         }
     }
 }
@@ -102,7 +108,10 @@ impl std::str::FromStr for Whitener {
         match s.to_lowercase().as_str() {
             "keccak" => Ok(Self::Keccak),
             "xor" => Ok(Self::Xor),
-            _ => Err(HypercubeError::UnsupportedAlgorithm(format!("whitener: {}", s))),
+            _ => Err(HypercubeError::UnsupportedAlgorithm(format!(
+                "whitener: {}",
+                s
+            ))),
         }
     }
 }
@@ -141,7 +150,11 @@ impl CompartmentMeta {
         let original_size = u64::from_le_bytes(data[8..16].try_into().unwrap());
         let mut shuffle_seed = [0u8; 32];
         shuffle_seed.copy_from_slice(&data[16..48]);
-        Ok(Self { compressed_size, original_size, shuffle_seed })
+        Ok(Self {
+            compressed_size,
+            original_size,
+            shuffle_seed,
+        })
     }
 }
 
@@ -152,9 +165,13 @@ impl CompartmentMeta {
 pub struct VhcHeader {
     /// Format version
     pub version: u32,
-    /// Cube dimension (informational only)
+    /// Cube identifier (maps to compartment/block layout)
+    pub cube_id: usize,
+    /// Number of compartments (dimension along one axis)
     pub dimension: usize,
-    /// Block size in bytes (2KB - 512KB)
+    /// Blocks per compartment
+    pub blocks_per_compartment: usize,
+    /// Block size in bytes (payload)
     pub block_size: usize,
     /// MAC tag size in bits (128, 256, or 512)
     pub mac_bits: usize,
@@ -174,35 +191,43 @@ pub struct VhcHeader {
 
 impl Default for VhcHeader {
     fn default() -> Self {
+        let cube_id = 1;
+        let compartments = 32;
+        let blocks_per_compartment = 32;
+        let block_size = 32;
         Self {
             version: 1,
-            dimension: 128,
-            block_size: 4096,
+            cube_id,
+            dimension: compartments,
+            blocks_per_compartment,
+            block_size,
             mac_bits: 256,
             compression: Compression::default(),
             shuffle: Shuffle::default(),
             aont: Aont::default(),
             hash: HashAlgorithm::default(),
             whitener: Whitener::default(),
-            fragment_size: 64, // Will be calculated based on block_size
+            fragment_size: Self::calculate_fragment_size(block_size),
         }
     }
 }
 
 impl VhcHeader {
-    /// Create a new header with the given parameters
+    /// Create a new header using an explicit geometry
     pub fn new(
-        dimension: usize,
+        cube_id: usize,
+        compartments: usize,
+        blocks_per_compartment: usize,
         block_size: usize,
         mac_bits: usize,
     ) -> Result<Self> {
-        // Validate dimension
-        if dimension < 2 || dimension > 65536 {
-            return Err(HypercubeError::InvalidDimension(dimension));
+        if compartments < 1 || compartments > 65536 {
+            return Err(HypercubeError::InvalidDimension(compartments));
         }
-
-        // Validate block size (must be power of 2, between 2KB and 512KB)
-        if block_size < 2048 || block_size > 524288 || !block_size.is_power_of_two() {
+        if blocks_per_compartment < 1 || blocks_per_compartment > 65536 {
+            return Err(HypercubeError::InvalidDimension(blocks_per_compartment));
+        }
+        if block_size == 0 {
             return Err(HypercubeError::InvalidBlockSize(block_size));
         }
 
@@ -211,13 +236,13 @@ impl VhcHeader {
             return Err(HypercubeError::InvalidMacBits(mac_bits));
         }
 
-        // Calculate fragment size - find largest power of 2 that evenly divides block_size
-        // and is reasonable (between 16 and 256 bytes for good diffusion)
         let fragment_size = Self::calculate_fragment_size(block_size);
 
         Ok(Self {
             version: 1,
-            dimension,
+            cube_id,
+            dimension: compartments,
+            blocks_per_compartment,
             block_size,
             mac_bits,
             fragment_size,
@@ -226,19 +251,22 @@ impl VhcHeader {
     }
 
     /// Calculate fragment size for a given block size
-    /// Returns the largest power of 2 between 16 and 256 that evenly divides block_size
+    /// Smaller cubes shuffle tiny fragments; larger cubes promote chunkier fragments
     fn calculate_fragment_size(block_size: usize) -> usize {
-        // Start from 64 bytes as default, but ensure it divides evenly
-        let mut frag_size = 64;
-
-        // Try to find a good fragment size
-        for size in [64, 128, 32, 256, 16].iter() {
-            if block_size % size == 0 {
-                frag_size = *size;
-                break;
-            }
+        if block_size == 0 {
+            return 1;
         }
-
+        // Aim for roughly <=16 fragments per block, clamp fragment size to <=256 bytes
+        let mut frag_size = 1;
+        while frag_size * 2 <= block_size
+            && (block_size / (frag_size * 2)) > 8
+            && frag_size * 2 <= 256
+        {
+            frag_size *= 2;
+        }
+        while frag_size > 1 && block_size % frag_size != 0 {
+            frag_size /= 2;
+        }
         frag_size
     }
 
@@ -262,6 +290,31 @@ impl VhcHeader {
         self.mac_bits / 8
     }
 
+    /// Get block payload size in bits
+    pub fn block_bits(&self) -> usize {
+        self.block_size * 8
+    }
+
+    /// Cube size (also equals compartments and blocks per compartment)
+    pub fn cube(&self) -> usize {
+        self.cube_id
+    }
+
+    /// Blocks per compartment
+    pub fn blocks_per_compartment(&self) -> usize {
+        self.blocks_per_compartment
+    }
+
+    /// Total blocks when the cube is full
+    pub fn theoretical_block_count(&self) -> usize {
+        self.blocks_per_compartment * self.dimension
+    }
+
+    /// Maximum payload capacity (excluding MAC/sequence/header)
+    pub fn payload_capacity_bytes(&self) -> usize {
+        self.block_size * self.theoretical_block_count()
+    }
+
     /// Get total block size (data + sequence + MAC)
     pub fn total_block_size(&self) -> usize {
         self.block_size + 16 + self.mac_bytes()
@@ -274,29 +327,29 @@ mod tests {
 
     #[test]
     fn test_header_creation() {
-        let header = VhcHeader::new(128, 4096, 256).unwrap();
-        assert_eq!(header.dimension, 128);
-        assert_eq!(header.block_size, 4096);
+        let header = VhcHeader::new(1, 32, 32, 64, 256).unwrap();
+        assert_eq!(header.cube_id, 1);
+        assert_eq!(header.dimension, 32);
+        assert_eq!(header.blocks_per_compartment, 32);
+        assert_eq!(header.block_size, 64);
         assert_eq!(header.mac_bits, 256);
-        assert_eq!(header.fragment_size, 64);
-        assert_eq!(header.fragments_per_block(), 64);
-        assert_eq!(header.total_block_size(), 4096 + 16 + 32);
+        assert_eq!(header.total_block_size(), 64 + 16 + 32);
     }
 
     #[test]
-    fn test_invalid_block_size() {
-        assert!(VhcHeader::new(128, 1000, 256).is_err()); // Not power of 2
-        assert!(VhcHeader::new(128, 1024, 256).is_err()); // Too small
-        assert!(VhcHeader::new(128, 1048576, 256).is_err()); // Too large
+    fn test_invalid_geometry() {
+        assert!(VhcHeader::new(1, 0, 32, 64, 256).is_err());
+        assert!(VhcHeader::new(1, 32, 0, 64, 256).is_err());
+        assert!(VhcHeader::new(1, 32, 32, 0, 256).is_err());
     }
 
     #[test]
     fn test_serialization() {
-        let header = VhcHeader::new(128, 4096, 256).unwrap();
+        let header = VhcHeader::new(1, 32, 32, 128, 512).unwrap();
         let bytes = header.to_bytes().unwrap();
         let restored = VhcHeader::from_bytes(&bytes).unwrap();
 
-        assert_eq!(header.dimension, restored.dimension);
+        assert_eq!(header.cube_id, restored.cube_id);
         assert_eq!(header.block_size, restored.block_size);
         assert_eq!(header.mac_bits, restored.mac_bits);
     }
