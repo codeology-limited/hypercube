@@ -28,29 +28,6 @@ impl std::str::FromStr for Compression {
     }
 }
 
-/// Shuffle algorithm options
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Shuffle {
-    #[default]
-    Feistel,
-    FisherYates,
-}
-
-impl std::str::FromStr for Shuffle {
-    type Err = HypercubeError;
-    fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
-            "feistel" => Ok(Self::Feistel),
-            "fisher-yates" | "fisheryates" => Ok(Self::FisherYates),
-            _ => Err(HypercubeError::UnsupportedAlgorithm(format!(
-                "shuffle: {}",
-                s
-            ))),
-        }
-    }
-}
-
 /// AONT algorithm options
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -93,51 +70,25 @@ impl std::str::FromStr for HashAlgorithm {
     }
 }
 
-/// Whitener algorithm options
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Whitener {
-    #[default]
-    Keccak,
-    Xor,
-}
-
-impl std::str::FromStr for Whitener {
-    type Err = HypercubeError;
-    fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
-            "keccak" => Ok(Self::Keccak),
-            "xor" => Ok(Self::Xor),
-            _ => Err(HypercubeError::UnsupportedAlgorithm(format!(
-                "whitener: {}",
-                s
-            ))),
-        }
-    }
-}
-
-/// Compartment metadata - stored at the START of compressed data
-/// Layout: [compressed_size: 8][original_size: 8][shuffle_seed: 32][compressed data...]
+/// Partition metadata - stored at the START of compressed data
+/// Layout: [compressed_size: 8][original_size: 8][compressed data...]
 #[derive(Debug, Clone)]
-pub struct CompartmentMeta {
+pub struct PartitionMeta {
     /// Compressed size in bytes (excluding this metadata header)
     pub compressed_size: u64,
     /// Original (uncompressed) size in bytes
     pub original_size: u64,
-    /// Shuffle seed derived from secret (for verification)
-    pub shuffle_seed: [u8; 32],
 }
 
-impl CompartmentMeta {
-    /// Metadata size: 8 bytes (compressed) + 8 bytes (original) + 32 bytes (seed) = 48 bytes
-    pub const SIZE: usize = 48;
+impl PartitionMeta {
+    /// Metadata size: 8 bytes (compressed) + 8 bytes (original) = 16 bytes
+    pub const SIZE: usize = 16;
 
     /// Serialize metadata to bytes
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         let mut buf = [0u8; Self::SIZE];
         buf[0..8].copy_from_slice(&self.compressed_size.to_le_bytes());
         buf[8..16].copy_from_slice(&self.original_size.to_le_bytes());
-        buf[16..48].copy_from_slice(&self.shuffle_seed);
         buf
     }
 
@@ -148,43 +99,35 @@ impl CompartmentMeta {
         }
         let compressed_size = u64::from_le_bytes(data[0..8].try_into().unwrap());
         let original_size = u64::from_le_bytes(data[8..16].try_into().unwrap());
-        let mut shuffle_seed = [0u8; 32];
-        shuffle_seed.copy_from_slice(&data[16..48]);
         Ok(Self {
             compressed_size,
             original_size,
-            shuffle_seed,
         })
     }
 }
 
 /// VHC file header - plaintext, describes global parameters only
-/// NO compartment information stored - that would reveal which blocks belong together
-/// Security model: scan all blocks, authenticate each with your secret
+/// NO partition information stored - that would reveal which blocks belong together
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VhcHeader {
     /// Format version
     pub version: u32,
-    /// Cube identifier (maps to compartment/block layout)
+    /// Cube identifier (maps to partition/block layout)
     pub cube_id: usize,
-    /// Number of compartments (dimension along one axis)
+    /// Number of partitions (dimension along one axis)
     pub dimension: usize,
-    /// Blocks per compartment
-    pub blocks_per_compartment: usize,
+    /// Blocks per partition
+    pub blocks_per_partition: usize,
     /// Block size in bytes (payload)
     pub block_size: usize,
     /// MAC tag size in bits (128, 256, or 512)
     pub mac_bits: usize,
     /// Compression algorithm
     pub compression: Compression,
-    /// Shuffle algorithm
-    pub shuffle: Shuffle,
     /// AONT algorithm
     pub aont: Aont,
     /// Hash algorithm for MAC
     pub hash: HashAlgorithm,
-    /// Whitener algorithm
-    pub whitener: Whitener,
     /// Fragment size in bytes
     pub fragment_size: usize,
 }
@@ -192,21 +135,19 @@ pub struct VhcHeader {
 impl Default for VhcHeader {
     fn default() -> Self {
         let cube_id = 1;
-        let compartments = 32;
-        let blocks_per_compartment = 32;
+        let partitions = 32;
+        let blocks_per_partition = 32;
         let block_size = 32;
         Self {
             version: 1,
             cube_id,
-            dimension: compartments,
-            blocks_per_compartment,
+            dimension: partitions,
+            blocks_per_partition,
             block_size,
             mac_bits: 256,
             compression: Compression::default(),
-            shuffle: Shuffle::default(),
             aont: Aont::default(),
             hash: HashAlgorithm::default(),
-            whitener: Whitener::default(),
             fragment_size: Self::calculate_fragment_size(block_size),
         }
     }
@@ -214,20 +155,24 @@ impl Default for VhcHeader {
 
 impl VhcHeader {
     /// Create a new header using an explicit geometry
+    /// For a hypercube, partitions and blocks_per_partition should be equal
+    /// and both must be multiples of 8
     pub fn new(
         cube_id: usize,
-        compartments: usize,
-        blocks_per_compartment: usize,
+        partitions: usize,
+        blocks_per_partition: usize,
         block_size: usize,
         mac_bits: usize,
     ) -> Result<Self> {
-        if compartments < 1 || compartments > 65536 {
-            return Err(HypercubeError::InvalidDimension(compartments));
+        // Dimension must be a multiple of 8
+        if partitions < 8 || partitions % 8 != 0 {
+            return Err(HypercubeError::InvalidDimension(partitions));
         }
-        if blocks_per_compartment < 1 || blocks_per_compartment > 65536 {
-            return Err(HypercubeError::InvalidDimension(blocks_per_compartment));
+        if blocks_per_partition < 8 || blocks_per_partition % 8 != 0 {
+            return Err(HypercubeError::InvalidDimension(blocks_per_partition));
         }
-        if block_size == 0 {
+        // Block size must be even, positive, and at least 32 bytes (for AONT key)
+        if block_size < 32 || block_size % 2 != 0 {
             return Err(HypercubeError::InvalidBlockSize(block_size));
         }
 
@@ -241,8 +186,8 @@ impl VhcHeader {
         Ok(Self {
             version: 1,
             cube_id,
-            dimension: compartments,
-            blocks_per_compartment,
+            dimension: partitions,
+            blocks_per_partition,
             block_size,
             mac_bits,
             fragment_size,
@@ -295,19 +240,28 @@ impl VhcHeader {
         self.block_size * 8
     }
 
-    /// Cube size (also equals compartments and blocks per compartment)
+    /// Cube size (also equals partitions and blocks per partition)
     pub fn cube(&self) -> usize {
         self.cube_id
     }
 
-    /// Blocks per compartment
-    pub fn blocks_per_compartment(&self) -> usize {
-        self.blocks_per_compartment
+    /// Blocks per partition
+    pub fn blocks_per_partition(&self) -> usize {
+        self.blocks_per_partition
+    }
+
+    /// Effective data blocks per partition (accounting for AONT overhead)
+    /// Rivest AONT adds one key block, so we have one less data block
+    pub fn data_blocks_per_partition(&self) -> usize {
+        match self.aont {
+            Aont::Rivest => self.blocks_per_partition.saturating_sub(1),
+            Aont::Oaep => self.blocks_per_partition,
+        }
     }
 
     /// Total blocks when the cube is full
     pub fn theoretical_block_count(&self) -> usize {
-        self.blocks_per_compartment * self.dimension
+        self.blocks_per_partition * self.dimension
     }
 
     /// Maximum payload capacity (excluding MAC/sequence/header)
@@ -327,25 +281,37 @@ mod tests {
 
     #[test]
     fn test_header_creation() {
-        let header = VhcHeader::new(1, 32, 32, 64, 256).unwrap();
-        assert_eq!(header.cube_id, 1);
+        let header = VhcHeader::new(32, 32, 32, 64, 256).unwrap();
+        assert_eq!(header.cube_id, 32);
         assert_eq!(header.dimension, 32);
-        assert_eq!(header.blocks_per_compartment, 32);
+        assert_eq!(header.blocks_per_partition, 32);
         assert_eq!(header.block_size, 64);
         assert_eq!(header.mac_bits, 256);
         assert_eq!(header.total_block_size(), 64 + 16 + 32);
     }
 
     #[test]
+    fn test_small_hypercube() {
+        let header = VhcHeader::new(8, 8, 8, 32, 256).unwrap();
+        assert_eq!(header.cube_id, 8);
+        assert_eq!(header.dimension, 8);
+        assert_eq!(header.blocks_per_partition, 8);
+        assert_eq!(header.theoretical_block_count(), 64);
+    }
+
+    #[test]
     fn test_invalid_geometry() {
-        assert!(VhcHeader::new(1, 0, 32, 64, 256).is_err());
-        assert!(VhcHeader::new(1, 32, 0, 64, 256).is_err());
-        assert!(VhcHeader::new(1, 32, 32, 0, 256).is_err());
+        // Dimension must be multiple of 8
+        assert!(VhcHeader::new(32, 5, 32, 64, 256).is_err());
+        assert!(VhcHeader::new(32, 32, 5, 64, 256).is_err());
+        // Block size must be even
+        assert!(VhcHeader::new(32, 32, 32, 63, 256).is_err());
+        assert!(VhcHeader::new(32, 32, 32, 0, 256).is_err());
     }
 
     #[test]
     fn test_serialization() {
-        let header = VhcHeader::new(1, 32, 32, 128, 512).unwrap();
+        let header = VhcHeader::new(32, 32, 32, 128, 512).unwrap();
         let bytes = header.to_bytes().unwrap();
         let restored = VhcHeader::from_bytes(&bytes).unwrap();
 
@@ -355,16 +321,14 @@ mod tests {
     }
 
     #[test]
-    fn test_compartment_meta() {
-        let meta = CompartmentMeta {
+    fn test_partition_meta() {
+        let meta = PartitionMeta {
             compressed_size: 1000,
             original_size: 12345,
-            shuffle_seed: [0xAB; 32],
         };
         let bytes = meta.to_bytes();
-        let restored = CompartmentMeta::from_bytes(&bytes).unwrap();
+        let restored = PartitionMeta::from_bytes(&bytes).unwrap();
         assert_eq!(meta.compressed_size, restored.compressed_size);
         assert_eq!(meta.original_size, restored.original_size);
-        assert_eq!(meta.shuffle_seed, restored.shuffle_seed);
     }
 }

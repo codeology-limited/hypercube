@@ -1,4 +1,4 @@
-use crate::compartment::create_compartment;
+use crate::partition::create_partition;
 use crate::error::{HypercubeError, Result};
 use crate::vhc::{append_blocks_to_vhc, get_block_count, read_vhc_header};
 use rand::rngs::OsRng;
@@ -31,22 +31,25 @@ pub fn seal_file(path: &Path) -> Result<usize> {
 
     while remaining > 0 {
         let iter_start = Instant::now();
-        let chunk_goal = remaining.min(header.blocks_per_compartment());
-        let chunk_bytes = cmp::max(1, header.block_size) * cmp::max(1, chunk_goal);
+        let data_blocks = header.data_blocks_per_partition();
+        // Generate less data to ensure it fits after metadata overhead
+        let max_payload = header.block_size * data_blocks;
+        let data_size = max_payload.saturating_sub(crate::header::PartitionMeta::SIZE + 64);
+        let chunk_bytes = cmp::max(1, data_size);
         let mut random_data = vec![0u8; chunk_bytes];
         rng.fill_bytes(&mut random_data);
 
         let mut secret = vec![0u8; 32];
         rng.fill_bytes(&mut secret);
 
-        let compartment = create_compartment(&random_data, &secret, &header, None)?;
-        let produced = compartment.blocks.len();
+        let partition = create_partition(&random_data, &secret, &header, Some(data_blocks))?;
+        let produced = partition.blocks.len();
         if produced == 0 {
             continue;
         }
 
         let take = remaining.min(produced);
-        new_blocks.extend(compartment.blocks.into_iter().take(take));
+        new_blocks.extend(partition.blocks.into_iter().take(take));
         remaining -= take;
         let processed = total - remaining;
         let elapsed = iter_start.elapsed();
@@ -65,7 +68,7 @@ pub fn seal_file(path: &Path) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::add::{add_compartment, AddOptions};
+    use crate::cli::add::{add_partition, AddOptions};
     use crate::vhc::{get_block_count, read_vhc_header};
     use tempfile::tempdir;
 
@@ -78,10 +81,9 @@ mod tests {
 
         let opts = AddOptions {
             secret: "secret".into(),
-            cube: 1,
             ..Default::default()
         };
-        add_compartment(&input, &vhc, &opts).unwrap();
+        add_partition(&input, &vhc, &opts).unwrap();
 
         let added = seal_file(&vhc).unwrap();
         assert!(added > 0);

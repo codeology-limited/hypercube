@@ -2,8 +2,20 @@
 pub const SEQUENCE_SIZE: usize = 16;
 
 /// A 128-bit sequence number
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SequenceNumber([u8; SEQUENCE_SIZE]);
+
+impl PartialOrd for SequenceNumber {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SequenceNumber {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.to_u128().cmp(&other.to_u128())
+    }
+}
 
 impl SequenceNumber {
     /// Create a new sequence number from a u128
@@ -77,7 +89,7 @@ impl SequencedBlock {
 }
 
 /// Add sequence numbers to blocks
-/// Sequences start from a random base for each compartment
+/// Sequences start from a random base for each partition
 pub fn sequence_blocks(blocks: Vec<Vec<u8>>, base: u128) -> Vec<SequencedBlock> {
     let mut seq = SequenceNumber::new(base);
     let mut result = Vec::with_capacity(blocks.len());
@@ -103,7 +115,9 @@ pub fn unsequence_blocks(mut blocks: Vec<SequencedBlock>) -> Option<Vec<Vec<u8>>
     // Verify consecutive sequences
     let base = blocks[0].sequence.to_u128();
     for (i, block) in blocks.iter().enumerate() {
-        if block.sequence.to_u128() != base.wrapping_add(i as u128) {
+        let expected = base.wrapping_add(i as u128);
+        let actual = block.sequence.to_u128();
+        if actual != expected {
             return None; // Missing or duplicate sequence
         }
     }

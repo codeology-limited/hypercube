@@ -12,8 +12,8 @@ pub fn show_info(path: &Path) -> Result<String> {
     let cube = header.cube();
     let block_bits = header.block_bits();
     let block_payload_bytes = header.block_size;
-    let per_compartment_blocks = header.blocks_per_compartment();
-    let compartment_capacity = block_payload_bytes * per_compartment_blocks;
+    let per_partition_blocks = header.blocks_per_partition();
+    let partition_capacity = block_payload_bytes * per_partition_blocks;
     let theoretical_blocks = header.theoretical_block_count();
     let payload_capacity_bytes = header.payload_capacity_bytes();
     let payload_capacity_bits = block_bits * theoretical_blocks;
@@ -35,18 +35,24 @@ pub fn show_info(path: &Path) -> Result<String> {
 
     output.push_str(&format!("Cube Geometry:\n"));
     output.push_str(&format!("  Cube id: {}\n", cube));
-    output.push_str(&format!("  Compartments: {}\n", header.dimension));
+    output.push_str(&format!("  Partitions: {}\n", header.dimension));
     output.push_str(&format!(
-        "  Blocks per compartment: {}\n",
-        per_compartment_blocks
+        "  Blocks per partition: {}\n",
+        per_partition_blocks
+    ));
+    let partitions_used =
+        (block_count + per_partition_blocks - 1) / per_partition_blocks.max(1);
+    output.push_str(&format!(
+        "  Partitions in use: {} / {}\n",
+        partitions_used, header.dimension
     ));
     output.push_str(&format!(
         "  Block payload: {} bytes ({} bits)\n",
         block_payload_bytes, block_bits
     ));
     output.push_str(&format!(
-        "  Capacity per compartment: {}\n",
-        format_size(compartment_capacity as u64)
+        "  Capacity per partition: {}\n",
+        format_size(partition_capacity as u64)
     ));
     output.push_str(&format!(
         "  Fragment size: {} bytes ({} fragments per block)\n",
@@ -57,10 +63,8 @@ pub fn show_info(path: &Path) -> Result<String> {
 
     output.push_str(&format!("Algorithms:\n"));
     output.push_str(&format!("  Compression: {:?}\n", header.compression));
-    output.push_str(&format!("  Shuffle: {:?}\n", header.shuffle));
     output.push_str(&format!("  AONT: {:?}\n", header.aont));
     output.push_str(&format!("  Hash: {:?}\n", header.hash));
-    output.push_str(&format!("  Whitener: {:?}\n", header.whitener));
     output.push_str(&format!("  MAC bits: {}\n", header.mac_bits));
     output.push_str(&format!("\n"));
 
@@ -118,7 +122,7 @@ pub fn show_info(path: &Path) -> Result<String> {
 
     // Security note
     output.push_str(&format!("Security Model:\n"));
-    output.push_str(&format!("  Blocks are not tracked by compartment.\n"));
+    output.push_str(&format!("  Blocks are not tracked by partition.\n"));
     output.push_str(&format!("  To extract, provide your secret key.\n"));
     output.push_str(&format!(
         "  Only blocks matching your key will be recovered.\n"
@@ -154,7 +158,7 @@ fn format_bits(bits: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::add::{add_compartment, AddOptions};
+    use crate::cli::add::{add_partition, AddOptions};
     use tempfile::tempdir;
 
     #[test]
@@ -169,13 +173,13 @@ mod tests {
             secret: "secret".into(),
             ..Default::default()
         };
-        add_compartment(&input_path, &vhc_path, &options).unwrap();
+        add_partition(&input_path, &vhc_path, &options).unwrap();
 
         let info = show_info(&vhc_path).unwrap();
 
         assert!(info.contains("Version: 1"));
-        assert!(info.contains("Cube id: 1"));
-        assert!(info.contains("Blocks per compartment:"));
+        assert!(info.contains("Cube id: 32")); // Cube id equals dimension
+        assert!(info.contains("Blocks per partition:"));
         assert!(info.contains("Total blocks written:"));
     }
 

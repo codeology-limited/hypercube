@@ -9,7 +9,7 @@ use std::path::Path;
 const VHC_MAGIC: &[u8; 4] = b"VHC\x01";
 
 /// A VHC file containing header and raw blocks
-/// Blocks are opaque - no tracking of which compartment they belong to
+/// Blocks are opaque - no tracking of which partition they belong to
 /// Security model: scan all blocks, authenticate each with your secret
 #[derive(Debug)]
 pub struct VhcFile {
@@ -187,8 +187,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.vhc");
 
-        // Create a VHC file with some blocks
-        let header = VhcHeader::new(1, 32, 32, 64, 256).unwrap();
+        // Create a VHC file with some blocks (dimension 32, block_size 64)
+        let header = VhcHeader::new(32, 32, 32, 64, 256).unwrap();
         let mut vhc = VhcFile::new(header);
 
         let block_size = vhc.header.total_block_size();
@@ -225,8 +225,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("append.vhc");
 
-        // Create initial file
-        let header = VhcHeader::new(1, 32, 32, 64, 256).unwrap();
+        // Create initial file (dimension 32, block_size 64)
+        let header = VhcHeader::new(32, 32, 32, 64, 256).unwrap();
         let block_size = header.total_block_size();
         let vhc = VhcFile::new(header);
         write_vhc_file(&path, &vhc).unwrap();
@@ -256,7 +256,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("header.vhc");
 
-        let header = VhcHeader::new(1, 32, 32, 128, 512).unwrap();
+        let header = VhcHeader::new(32, 32, 32, 128, 512).unwrap();
         let block_size = header.total_block_size();
         let mut vhc = VhcFile::new(header);
         vhc.add_blocks(vec![vec![0u8; block_size]; 100]); // 100 blocks

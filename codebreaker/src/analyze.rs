@@ -1,12 +1,12 @@
-use crate::cube::{analyze_data, cube_config};
-use crate::error::Result;
-use crate::header::Compression;
+use anyhow::Result;
+use hypercube::cube::{analyze_data, CubeConfig};
+use hypercube::header::Compression;
 use std::path::Path;
 
-/// Suggest a cube size for an input file
-pub fn analyze_file(path: &Path, compression: Compression, cube_id: usize) -> Result<String> {
+/// Suggest a Hypercube configuration for an input file.
+pub fn analyze_file(path: &Path, compression: Compression, dimension: usize) -> Result<String> {
     let data = std::fs::read(path)?;
-    let cube = cube_config(cube_id)?;
+    let cube = CubeConfig::hypercube(dimension);
     let analysis = analyze_data(&data, compression, cube)?;
 
     let mut output = String::new();
@@ -27,8 +27,8 @@ pub fn analyze_file(path: &Path, compression: Compression, cube_id: usize) -> Re
         format_size(analysis.payload_bytes as u64)
     ));
     output.push_str(&format!(
-        "Cube {}: {} compartments × {} blocks\n",
-        analysis.cube.id, analysis.cube.compartments, analysis.cube.blocks_per_compartment
+        "Cube {}: {} partitions × {} blocks\n",
+        analysis.cube.id, analysis.cube.partitions, analysis.cube.blocks_per_partition
     ));
     output.push_str(&format!(
         "Block payload size: {} bytes ({} bits)\n",
@@ -69,7 +69,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let input = dir.path().join("data.bin");
         std::fs::write(&input, b"hello world").unwrap();
-        let report = analyze_file(&input, Compression::Zstd, 1).unwrap();
-        assert!(report.contains("Cube 1"));
+        let report = analyze_file(&input, Compression::Zstd, 32).unwrap();
+        assert!(report.contains("Cube 32")); // dimension = 32, now shows "partitions"
     }
 }

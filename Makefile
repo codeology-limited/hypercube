@@ -1,39 +1,43 @@
-.PHONY: all build test clean release install uninstall bump-patch bump-minor bump-major
+.PHONY: all build test clean release install uninstall bump-patch bump-minor bump-major hypercube codebreaker
 
-# Install location
 INSTALL_DIR := /usr/local/bin
-BINARY := hypercube
+HYPERCUBE_BIN := hypercube
+CODEBREAKER_BIN := codebreaker
+VERSION_FILE := hypercube/VERSION
+BUILD_FILE := hypercube/BUILD_NUMBER
 
-# Default target - build debug and install
 all: build install-debug
 
-# Build debug version
 build:
-	cargo build
+	cargo build --workspace
 
-# Build release version
+hypercube:
+	cargo build --package hypercube
+
+codebreaker:
+	cargo build --package codebreaker
+
 release: clean-binary
-	cargo build --release
-	@echo "Installing release version to $(INSTALL_DIR)/$(BINARY)..."
-	@sudo cp target/release/$(BINARY) $(INSTALL_DIR)/$(BINARY)
-	@sudo chmod +x $(INSTALL_DIR)/$(BINARY)
-	@echo "Installed: $$($(INSTALL_DIR)/$(BINARY) --version)"
+	cargo build --workspace --release
+	@echo "Installing release version to $(INSTALL_DIR)..."
+	@sudo cp target/release/$(HYPERCUBE_BIN) $(INSTALL_DIR)/$(HYPERCUBE_BIN)
+	@sudo cp target/release/$(CODEBREAKER_BIN) $(INSTALL_DIR)/$(CODEBREAKER_BIN)
+	@sudo chmod +x $(INSTALL_DIR)/$(HYPERCUBE_BIN) $(INSTALL_DIR)/$(CODEBREAKER_BIN)
+	@echo "Installed: $$($(INSTALL_DIR)/$(HYPERCUBE_BIN) --version)"
 
-# Install debug version
 install-debug: build
-	@echo "Installing debug version to $(INSTALL_DIR)/$(BINARY)..."
-	@sudo cp target/debug/$(BINARY) $(INSTALL_DIR)/$(BINARY)
-	@sudo chmod +x $(INSTALL_DIR)/$(BINARY)
-	@echo "Installed: $$($(INSTALL_DIR)/$(BINARY) --version)"
+	@echo "Installing debug versions to $(INSTALL_DIR)..."
+	@sudo cp target/debug/$(HYPERCUBE_BIN) $(INSTALL_DIR)/$(HYPERCUBE_BIN)
+	@sudo cp target/debug/$(CODEBREAKER_BIN) $(INSTALL_DIR)/$(CODEBREAKER_BIN)
+	@sudo chmod +x $(INSTALL_DIR)/$(HYPERCUBE_BIN) $(INSTALL_DIR)/$(CODEBREAKER_BIN)
+	@echo "Installed Hypercube: $$($(INSTALL_DIR)/$(HYPERCUBE_BIN) --version)"
 
-# Remove installed binary
 uninstall:
-	@echo "Removing $(INSTALL_DIR)/$(BINARY)..."
-	@sudo rm -f $(INSTALL_DIR)/$(BINARY)
+	@echo "Removing binaries from $(INSTALL_DIR)..."
+	@sudo rm -f $(INSTALL_DIR)/$(HYPERCUBE_BIN) $(INSTALL_DIR)/$(CODEBREAKER_BIN)
 
-# Clean just the binary (not full clean)
 clean-binary:
-	@rm -f $(INSTALL_DIR)/$(BINARY) 2>/dev/null || true
+	@rm -f $(INSTALL_DIR)/$(HYPERCUBE_BIN) $(INSTALL_DIR)/$(CODEBREAKER_BIN) 2>/dev/null || true
 
 # Run all tests
 test:
@@ -61,40 +65,45 @@ fmt:
 
 # Bump patch version (0.1.x) - auto-increments on release
 bump-patch:
-	@VERSION=$$(cat VERSION); \
+	@VERSION=$$(cat $(VERSION_FILE)); \
 	MAJOR=$$(echo $$VERSION | cut -d. -f1); \
 	MINOR=$$(echo $$VERSION | cut -d. -f2); \
 	PATCH=$$(echo $$VERSION | cut -d. -f3); \
 	NEW_PATCH=$$((PATCH + 1)); \
 	NEW_VERSION="$$MAJOR.$$MINOR.$$NEW_PATCH"; \
-	echo $$NEW_VERSION > VERSION; \
+	echo $$NEW_VERSION > $(VERSION_FILE); \
 	echo "Version bumped to $$NEW_VERSION"
 
 # Bump minor version (0.x.0)
 bump-minor:
-	@VERSION=$$(cat VERSION); \
+	@VERSION=$$(cat $(VERSION_FILE)); \
 	MAJOR=$$(echo $$VERSION | cut -d. -f1); \
 	MINOR=$$(echo $$VERSION | cut -d. -f2); \
 	NEW_MINOR=$$((MINOR + 1)); \
 	NEW_VERSION="$$MAJOR.$$NEW_MINOR.0"; \
-	echo $$NEW_VERSION > VERSION; \
+	echo $$NEW_VERSION > $(VERSION_FILE); \
 	echo "Version bumped to $$NEW_VERSION"
 
 # Bump major version (x.0.0)
 bump-major:
-	@VERSION=$$(cat VERSION); \
+	@VERSION=$$(cat $(VERSION_FILE)); \
 	MAJOR=$$(echo $$VERSION | cut -d. -f1); \
 	NEW_MAJOR=$$((MAJOR + 1)); \
 	NEW_VERSION="$$NEW_MAJOR.0.0"; \
-	echo $$NEW_VERSION > VERSION; \
+	echo $$NEW_VERSION > $(VERSION_FILE); \
 	echo "Version bumped to $$NEW_VERSION"
 
 # Show current version
 version:
-	@echo "VERSION file: $$(cat VERSION)"
-	@echo "BUILD_NUMBER: $$(cat BUILD_NUMBER)"
-	@if [ -f $(INSTALL_DIR)/$(BINARY) ]; then \
-		echo "Installed: $$($(INSTALL_DIR)/$(BINARY) --version)"; \
+	@echo "Hypercube VERSION: $$(cat $(VERSION_FILE))"
+	@echo "Hypercube BUILD_NUMBER: $$(cat $(BUILD_FILE))"
+	@if [ -f $(INSTALL_DIR)/$(HYPERCUBE_BIN) ]; then \
+		echo "Installed Hypercube: $$($(INSTALL_DIR)/$(HYPERCUBE_BIN) --version)"; \
 	else \
-		echo "Not installed"; \
+		echo "Hypercube not installed"; \
+	fi
+	@if [ -f $(INSTALL_DIR)/$(CODEBREAKER_BIN) ]; then \
+		echo "Installed Codebreaker: $$($(INSTALL_DIR)/$(CODEBREAKER_BIN) --version)"; \
+	else \
+		echo "Codebreaker not installed"; \
 	fi

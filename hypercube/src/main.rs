@@ -1,9 +1,8 @@
 use clap::{Parser, Subcommand};
 use hypercube::cli::{
-    add_compartment, analyze_file, extract_from_vhc, seal_file, show_info, show_stats, AddOptions,
-    ExtractOptions,
+    add_partition, extract_from_vhc, seal_file, show_info, AddOptions, ExtractOptions,
 };
-use hypercube::header::{Aont, Compression, HashAlgorithm, Shuffle, Whitener};
+use hypercube::header::{Aont, Compression, HashAlgorithm};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -34,18 +33,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Add a compartment to a VHC file
+    /// Add a partition to a VHC file
     #[command(alias = "a")]
     Add {
-        /// Secret key for this compartment
+        /// Secret key for this partition
         #[arg(long, required = true)]
         secret: String,
 
         /// Input file to add
         input: PathBuf,
 
-        /// Output VHC file (creates if doesn't exist)
-        output: PathBuf,
+        /// Output VHC file (defaults to <INPUT>.vhc)
+        #[arg(value_name = "OUTPUT")]
+        output: Option<PathBuf>,
 
         /// Hash algorithm for MAC
         #[arg(long, default_value = "sha3", value_parser = parse_hash)]
@@ -55,39 +55,27 @@ enum Commands {
         #[arg(long, default_value = "rivest", value_parser = parse_aont)]
         aont: Aont,
 
-        /// Shuffle algorithm
-        #[arg(long, default_value = "feistel", value_parser = parse_shuffle)]
-        shuffle: Shuffle,
-
-        /// Whitener algorithm
-        #[arg(long, default_value = "keccak", value_parser = parse_whitener)]
-        whitener: Whitener,
-
         /// Compression algorithm
         #[arg(long, default_value = "zstd", value_parser = parse_compression)]
         compression: Compression,
 
-        /// Cube preset (1 = 32 compartments × 32 blocks)
-        #[arg(long, default_value = "1", value_parser = parse_cube)]
-        cube: usize,
+        /// Hypercube dimension (N×N blocks, must be multiple of 8)
+        #[arg(long, default_value = "32")]
+        dimension: usize,
 
         /// MAC size in bits (128, 256, or 512)
         #[arg(long, default_value = "256")]
         mac_bits: usize,
 
-        /// Target specific compartment index
-        #[arg(long)]
-        compartment: Option<usize>,
-
-        /// Fill all remaining compartments with chaff
+        /// Fill all remaining partitions with chaff
         #[arg(long)]
         seal: bool,
     },
 
-    /// Extract a compartment from a VHC file
+    /// Extract a partition from a VHC file
     #[command(alias = "x")]
     Extract {
-        /// Secret key for the compartment
+        /// Secret key for the partition
         #[arg(long, required = true)]
         secret: String,
 
@@ -105,30 +93,9 @@ enum Commands {
         file: PathBuf,
     },
 
-    /// Cryptanalysis of a random block
-    #[command(alias = "s")]
-    Stats {
-        /// VHC file to analyze
-        file: PathBuf,
-    },
-
     /// Fill remaining capacity with random chaff blocks
     Seal {
         /// VHC file to seal
-        file: PathBuf,
-    },
-
-    /// Analyze a file and suggest a cube size
-    Analyze {
-        /// Compression algorithm to simulate
-        #[arg(long, default_value = "zstd", value_parser = parse_compression)]
-        compression: Compression,
-
-        /// Cube preset to evaluate
-        #[arg(long, default_value = "1", value_parser = parse_cube)]
-        cube: usize,
-
-        /// File to analyze
         file: PathBuf,
     },
 }
@@ -141,24 +108,14 @@ fn parse_aont(s: &str) -> Result<Aont, String> {
     s.parse().map_err(|e| format!("{}", e))
 }
 
-fn parse_shuffle(s: &str) -> Result<Shuffle, String> {
-    s.parse().map_err(|e| format!("{}", e))
-}
-
-fn parse_whitener(s: &str) -> Result<Whitener, String> {
-    s.parse().map_err(|e| format!("{}", e))
-}
-
 fn parse_compression(s: &str) -> Result<Compression, String> {
     s.parse().map_err(|e| format!("{}", e))
 }
 
-fn parse_cube(s: &str) -> Result<usize, String> {
-    let value: usize = s.parse().map_err(|e| format!("{}", e))?;
-    match value {
-        1 => Ok(value),
-        _ => Err(format!("Unsupported cube id: {}", value)),
-    }
+fn default_output_path(input: &PathBuf) -> PathBuf {
+    let mut os = input.as_os_str().to_os_string();
+    os.push(".vhc");
+    PathBuf::from(os)
 }
 
 fn main() -> ExitCode {
@@ -189,30 +146,26 @@ fn main() -> ExitCode {
             output,
             hash,
             aont,
-            shuffle,
-            whitener,
             compression,
-            cube,
+            dimension,
             mac_bits,
-            compartment,
             seal,
         } => {
             let options = AddOptions {
                 secret,
                 compression,
-                shuffle,
                 aont,
                 hash,
-                whitener,
-                cube,
+                dimension,
                 mac_bits,
-                compartment,
                 seal,
             };
 
-            match add_compartment(&input, &output, &options) {
+            let output_path = output.unwrap_or_else(|| default_output_path(&input));
+
+            match add_partition(&input, &output_path, &options) {
                 Ok(block_count) => {
-                    println!("Added {} blocks to {}", block_count, output.display());
+                    println!("Added {} blocks to {}", block_count, output_path.display());
                     if seal {
                         println!("File sealed with chaff blocks");
                     }
@@ -246,14 +199,6 @@ fn main() -> ExitCode {
             Err(e) => Err(e),
         },
 
-        Commands::Stats { file } => match show_stats(&file) {
-            Ok(stats) => {
-                print!("{}", stats);
-                Ok(())
-            }
-            Err(e) => Err(e),
-        },
-
         Commands::Seal { file } => match seal_file(&file) {
             Ok(0) => {
                 println!("{} is already full", file.display());
@@ -261,18 +206,6 @@ fn main() -> ExitCode {
             }
             Ok(added) => {
                 println!("Added {} random blocks to {}", added, file.display());
-                Ok(())
-            }
-            Err(e) => Err(e),
-        },
-
-        Commands::Analyze {
-            compression,
-            cube,
-            file,
-        } => match analyze_file(&file, compression, cube) {
-            Ok(report) => {
-                print!("{}", report);
                 Ok(())
             }
             Err(e) => Err(e),

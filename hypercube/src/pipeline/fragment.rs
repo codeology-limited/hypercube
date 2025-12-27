@@ -42,13 +42,14 @@ pub fn unfragment_block(fragments: &[Vec<u8>]) -> Vec<u8> {
 }
 
 /// Unfragment all: reassemble flat fragment list back into blocks
+/// Handles remainder fragments (e.g., from Rivest AONT key block)
 pub fn unfragment_all(fragments: &[Vec<u8>], fragments_per_block: usize) -> Vec<Vec<u8>> {
     if fragments.is_empty() || fragments_per_block == 0 {
         return Vec::new();
     }
 
     fragments
-        .chunks_exact(fragments_per_block)
+        .chunks(fragments_per_block)
         .map(|chunk| unfragment_block(chunk))
         .collect()
 }
